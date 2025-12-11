@@ -1,12 +1,13 @@
 // components/CrimeMap.tsx
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import axios from "axios";
 import type { PoliceVehicle } from "@/app/api/police-vehicles/route";
 import type { CrimeReport } from "@/app/api/crime-reports/route";
+import type { Feature, FeatureCollection, Point } from "geojson";
 import {
   Dialog,
   DialogContent,
@@ -25,17 +26,33 @@ type SelectedThing =
 const AUCKLAND_LNG = 174.7633;
 const AUCKLAND_LAT = -36.8485;
 
+const CRIME_SOURCE_ID = "crimes-source";
+const CRIME_LAYER_ID = "crimes-layer";
+const CRIME_PULSE_LAYER_ID = "crimes-pulse-layer";
+type CrimeFeatureProps = {
+  id: string;
+  severity: CrimeReport["severity"];
+  freshness: "recent" | "warm" | "old";
+};
+type CrimeFeature = Feature<Point, CrimeFeatureProps>;
+type CrimeFeatureCollection = FeatureCollection<Point, CrimeFeatureProps>;
+
 export function CrimeMap() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
   const vehicleMarkersRef = useRef<Record<string, mapboxgl.Marker>>({});
-  const crimeMarkersRef = useRef<Record<string, mapboxgl.Marker>>({});
 
   const [mapLoaded, setMapLoaded] = useState(false);
   const [vehicles, setVehicles] = useState<PoliceVehicle[]>([]);
   const [crimes, setCrimes] = useState<CrimeReport[]>([]);
+  const crimesRef = useRef<CrimeReport[]>([]);
   const [selected, setSelected] = useState<SelectedThing>(null);
+
+  // Keep crimesRef in sync so click handler always has the latest data
+  useEffect(() => {
+    crimesRef.current = crimes;
+  }, [crimes]);
 
   // Top down map, no tilt
   useEffect(() => {
@@ -65,6 +82,113 @@ export function CrimeMap() {
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
 
     map.on("load", () => {
+      // Add empty GeoJSON source for crimes
+      map.addSource(CRIME_SOURCE_ID, {
+        type: "geojson",
+        data: {
+          type: "FeatureCollection",
+          features: [],
+        },
+      });
+
+      // Pulsing halo underneath solid dot
+      map.addLayer({
+        id: CRIME_PULSE_LAYER_ID,
+        type: "circle",
+        source: CRIME_SOURCE_ID,
+        paint: {
+          "circle-color": [
+            "match",
+            ["get", "severity"],
+            "high",
+            "#ef4444",
+            "medium",
+            "#f97316",
+            "low",
+            "#22c55e",
+            "#e5e7eb",
+          ],
+          // These values get animated later via setPaintProperty
+          "circle-radius": [
+            "match",
+            ["get", "freshness"],
+            "recent",
+            14,
+            "warm",
+            12,
+            "old",
+            10,
+            12,
+          ],
+          "circle-opacity": 0.35,
+        },
+      });
+
+      map.addLayer({
+        id: CRIME_LAYER_ID,
+        type: "circle",
+        source: CRIME_SOURCE_ID,
+        paint: {
+          // colour by severity
+          "circle-color": [
+            "match",
+            ["get", "severity"],
+            "high",
+            "#ef4444",
+            "medium",
+            "#f97316",
+            "low",
+            "#22c55e",
+            "#e5e7eb",
+          ],
+          // radius by recency
+          "circle-radius": [
+            "match",
+            ["get", "freshness"],
+            "recent",
+            10,
+            "warm",
+            8,
+            "old",
+            6,
+            8,
+          ],
+          "circle-opacity": [
+            "match",
+            ["get", "freshness"],
+            "recent",
+            0.9,
+            "warm",
+            0.75,
+            "old",
+            0.6,
+            0.8,
+          ],
+          "circle-stroke-width": 1.5,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+
+      // Click handler for crimes
+      map.on("click", CRIME_LAYER_ID, (e) => {
+        const feature = e.features?.[0];
+        const id = feature?.properties?.id as string | undefined;
+        if (!id) return;
+
+        const crime = crimesRef.current.find((c) => c.id === id);
+        if (!crime) return;
+
+        setSelected({ type: "crime", data: crime });
+      });
+
+      // Nice pointer cursor on hover
+      map.on("mouseenter", CRIME_LAYER_ID, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", CRIME_LAYER_ID, () => {
+        map.getCanvas().style.cursor = "";
+      });
+
       setMapLoaded(true);
     });
 
@@ -103,38 +227,54 @@ export function CrimeMap() {
     };
   }, []);
 
-  function getCrimeClasses(report: CrimeReport): {
-    containerClass: string;
-    innerClass: string;
-  } {
-    const reportedAt = new Date(report.reportedAt).getTime();
-    const ageMinutes = (Date.now() - reportedAt) / 60000;
+  // Push crime reports into the Mapbox GeoJSON source
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+    const src = map.getSource(CRIME_SOURCE_ID) as
+      | mapboxgl.GeoJSONSource
+      | undefined;
+    if (!src) return;
 
-    let severityClass = "crime-low";
-    if (report.severity === "medium") severityClass = "crime-medium";
-    if (report.severity === "high") severityClass = "crime-high";
+    const now = Date.now();
 
-    let recencyClass = "";
-    if (ageMinutes < 15) {
-      recencyClass = "crime-recent";
-    } else if (ageMinutes < 60) {
-      recencyClass = "crime-warm";
-    } else {
-      recencyClass = "crime-old";
-    }
+    const features: CrimeFeature[] = crimes.map((crime) => {
+      const reportedAtTime = new Date(crime.reportedAt).getTime();
+      const ageMinutes = (now - reportedAtTime) / 60000;
 
-    return {
-      containerClass: `crime-marker ${severityClass} ${recencyClass}`,
-      innerClass: "crime-inner-dot",
+      let freshness: "recent" | "warm" | "old";
+      if (ageMinutes < 15) freshness = "recent";
+      else if (ageMinutes < 60) freshness = "warm";
+      else freshness = "old";
+
+      const feature: CrimeFeature = {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [crime.longitude, crime.latitude],
+        },
+        properties: {
+          id: crime.id,
+          severity: crime.severity,
+          freshness,
+        },
+      };
+      return feature;
+    });
+
+    const geojson: CrimeFeatureCollection = {
+      type: "FeatureCollection",
+      features,
     };
-  }
 
-  // Markers
+    src.setData(geojson);
+  }, [mapLoaded, crimes]);
+
+  // Police vehicles as DOM markers
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return;
     const map = mapRef.current;
 
-    // Police vehicles as icons
     const existingVehicleMarkers = vehicleMarkersRef.current;
     const seenVehicleIds = new Set<string>();
 
@@ -183,65 +323,51 @@ export function CrimeMap() {
         delete existingVehicleMarkers[id];
       }
     });
+  }, [mapLoaded, vehicles]);
 
-    // Crimes as pulsing dots
-    const existingCrimeMarkers = crimeMarkersRef.current;
-    const seenCrimeIds = new Set<string>();
+  // Animate crime pulse layer using Mapbox paint properties (no DOM/CSS)
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current) return;
+    const map = mapRef.current;
+    if (!map.getLayer(CRIME_PULSE_LAYER_ID)) return;
 
-    crimes.forEach((report) => {
-      const { id, longitude, latitude } = report;
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
-      seenCrimeIds.add(id);
+    let frame: number;
 
-      const existingMarker = existingCrimeMarkers[id];
-      const { containerClass, innerClass } = getCrimeClasses(report);
+    const animate = () => {
+      const t = (performance.now() % 1500) / 1500; // 1.5s loop
+      const scale = 1 + 0.8 * Math.sin(t * Math.PI * 2); // 1..1.8
+      const fade = Math.max(0, 0.45 - 0.25 * (scale - 1)); // fade as it grows
 
-      if (existingMarker) {
-        existingMarker.setLngLat([longitude, latitude]);
-        const el = existingMarker.getElement();
-        el.className = containerClass;
-        const inner = el.querySelector(
-          ".crime-inner-dot"
-        ) as HTMLDivElement | null;
-        if (inner) {
-          inner.className = innerClass;
-        }
-        return;
-      }
+      const radiusExpression: mapboxgl.Expression = [
+        "*",
+        scale,
+        [
+          "match",
+          ["get", "freshness"],
+          "recent",
+          14,
+          "warm",
+          12,
+          "old",
+          10,
+          12,
+        ],
+      ];
 
-      const el = document.createElement("div");
-      el.className = containerClass;
+      map.setPaintProperty(
+        CRIME_PULSE_LAYER_ID,
+        "circle-radius",
+        radiusExpression
+      );
+      map.setPaintProperty(CRIME_PULSE_LAYER_ID, "circle-opacity", fade);
 
-      const inner = document.createElement("div");
-      inner.className = innerClass;
-      el.appendChild(inner);
+      frame = requestAnimationFrame(animate);
+    };
 
-      const pulse = document.createElement("div");
-      pulse.className = "crime-pulse";
-      el.appendChild(pulse);
+    frame = requestAnimationFrame(animate);
 
-      el.onclick = (e) => {
-        e.stopPropagation();
-        setSelected({ type: "crime", data: report });
-      };
-
-      const marker = new mapboxgl.Marker({
-        element: el,
-        anchor: "center",
-      })
-        .setLngLat([longitude, latitude])
-        .addTo(map);
-
-      existingCrimeMarkers[id] = marker;
-    });
-
-    Object.keys(existingCrimeMarkers).forEach((id) => {
-      if (!seenCrimeIds.has(id)) {
-        existingCrimeMarkers[id].remove();
-        delete existingCrimeMarkers[id];
-      }
-    });
-  }, [mapLoaded, vehicles, crimes]);
+    return () => cancelAnimationFrame(frame);
+  }, [mapLoaded]);
 
   const dialogOpen = selected !== null;
 

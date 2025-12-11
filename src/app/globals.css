@@ -116,11 +116,13 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html,
   body {
+    margin: 0;
+    padding: 0;
     @apply bg-background text-foreground;
   }
 }
-
 
 /* Police vehicle icon wrapper - SMALLER and no transform */
 .police-icon-wrapper {
@@ -147,94 +149,4 @@
 
 .police-icon-wrapper[data-status="busy"] .police-icon-image {
   filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.9));
-}
-
-/* Crime markers - pulsing dots for crime reports */
-.crime-marker {
-  position: relative;
-  width: 18px;
-  height: 18px;
-  border-radius: 9999px;
-  cursor: pointer;
-}
-
-/* Severity colour on inner dot */
-.crime-inner-dot {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  border: 2px solid white;
-}
-
-.crime-marker.crime-low .crime-inner-dot {
-  background: #22c55e;
-}
-
-.crime-marker.crime-medium .crime-inner-dot {
-  background: #f97316;
-}
-
-.crime-marker.crime-high .crime-inner-dot {
-  background: #ef4444;
-}
-
-/* Pulse ring */
-.crime-pulse {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 18px;
-  height: 18px;
-  border-radius: 9999px;
-  pointer-events: none;
-}
-
-/* Recency-based pulse strength */
-.crime-marker.crime-recent .crime-pulse {
-  background: rgba(239, 68, 68, 0.4);
-  animation: crime-pulse-strong 1.2s infinite;
-}
-
-.crime-marker.crime-warm .crime-pulse {
-  background: rgba(249, 115, 22, 0.3);
-  animation: crime-pulse-soft 2s infinite;
-}
-
-.crime-marker.crime-old .crime-pulse {
-  background: rgba(148, 163, 184, 0.15);
-  animation: crime-pulse-soft 3s infinite;
-}
-
-/* Keyframes */
-@keyframes crime-pulse-strong {
-  0% {
-    transform: scale(0.7);
-    opacity: 0.9;
-  }
-  70% {
-    transform: scale(2.1);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(2.1);
-    opacity: 0;
-  }
-}
-
-@keyframes crime-pulse-soft {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.5;
-  }
-  70% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.8);
-    opacity: 0;
-  }
 }
