@@ -1,3 +1,5 @@
+// lib/patrolSimulation.ts
+
 export type PoliceVehicleStatus = "available" | "busy";
 
 export type Point = { lat: number; lng: number };
@@ -7,31 +9,25 @@ export type BaseUnitState = {
   index: number;
   lat: number;
   lng: number;
-  routeId: string;
+  routeId: string; // logical region / route
   speedMS: number;
 };
 
-type PatrolRoute = {
-  id: string;
-  points: Point[];
-};
-
-type SuburbBox = {
+type Region = {
   id: string;
   centre: Point;
   dLat: number;
   dLng: number;
 };
 
+export const VEHICLE_COUNT = 80;
 const EARTH_RADIUS_M = 6371000;
 
-export const VEHICLE_COUNT = 80;
-
 /**
- * Approximate patrol zones covering major Auckland suburbs.
- * Each one becomes a rectangular “patrol box” loop.
+ * Regions roughly covering major Auckland areas.
+ * Units will orbit each region on an ellipse.
  */
-const SUBURB_BOXES: SuburbBox[] = [
+const REGIONS: Region[] = [
   // Central city
   {
     id: "CBD",
@@ -185,34 +181,15 @@ const SUBURB_BOXES: SuburbBox[] = [
   },
 ];
 
-function makeBoxRoute(box: SuburbBox): PatrolRoute {
-  const { id, centre, dLat, dLng } = box;
-  const { lat, lng } = centre;
-
-  const points: Point[] = [
-    { lat: lat + dLat, lng: lng - dLng },
-    { lat: lat + dLat, lng: lng + dLng },
-    { lat: lat - dLat, lng: lng + dLng },
-    { lat: lat - dLat, lng: lng - dLng },
-    { lat: lat + dLat, lng: lng - dLng },
-  ];
-
-  return { id, points };
+// Basic hash for per-unit randomness
+function hashInt(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i += 1) {
+    hash = (hash << 5) - hash + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
 }
-
-const PATROL_ROUTES: PatrolRoute[] = SUBURB_BOXES.map(makeBoxRoute);
-
-type RouteSegment = {
-  start: Point;
-  end: Point;
-  length: number;
-};
-
-type RouteMeta = {
-  route: PatrolRoute;
-  segments: RouteSegment[];
-  totalLength: number;
-};
 
 function toRadians(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -234,30 +211,6 @@ export function haversineDistanceMetres(a: Point, b: Point): number {
   return EARTH_RADIUS_M * c;
 }
 
-function buildRouteMeta(route: PatrolRoute): RouteMeta {
-  const segments: RouteSegment[] = [];
-  let total = 0;
-  for (let i = 0; i < route.points.length - 1; i += 1) {
-    const start = route.points[i];
-    const end = route.points[i + 1];
-    const length = haversineDistanceMetres(start, end);
-    segments.push({ start, end, length });
-    total += length;
-  }
-  return { route, segments, totalLength: total };
-}
-
-const ROUTE_META: RouteMeta[] = PATROL_ROUTES.map(buildRouteMeta);
-
-function hashInt(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i += 1) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-}
-
 function getSpeedMSForIndex(index: number): number {
   const baseId = `UNIT-${index.toString().padStart(2, "0")}`;
   const h = hashInt(baseId);
@@ -266,45 +219,43 @@ function getSpeedMSForIndex(index: number): number {
 }
 
 /**
- * Base patrol state for a single unit index at a given time.
+ * Smooth elliptical patrol path around a region.
+ * Each unit has its own phase, radius multipliers and angle speed.
  */
 export function getBaseUnitStateAtTime(
   index: number,
   nowMs: number
 ): BaseUnitState {
-  const routeMeta = ROUTE_META[index % ROUTE_META.length];
-
+  const region = REGIONS[index % REGIONS.length];
   const id = `UNIT-${index.toString().padStart(2, "0")}`;
+  const h = hashInt(id);
+
   const speedMS = getSpeedMSForIndex(index);
 
-  const h = hashInt(id);
-  const offsetMetres = h % routeMeta.totalLength;
+  // Ellipse radii slightly different per unit
+  const ampFactorLat = 0.6 + ((h >> 3) % 40) / 100; // 0.6..1.0
+  const ampFactorLng = 0.6 + ((h >> 7) % 40) / 100; // 0.6..1.0
+  const ampLat = region.dLat * ampFactorLat;
+  const ampLng = region.dLng * ampFactorLng;
 
-  const elapsedSeconds = nowMs / 1000;
-  const travelledMetres =
-    (offsetMetres + elapsedSeconds * speedMS) % routeMeta.totalLength;
+  // Per-unit phase and angular speed
+  const phase = ((h % 360) * Math.PI) / 180;
+  const loopsPerMinute = 1 / (4 + (h % 3)); // between 1 loop per 4–6 minutes
+  const angularSpeed = (2 * Math.PI * loopsPerMinute) / 60_000; // rad per ms
 
-  let remaining = travelledMetres;
-  let lat = routeMeta.route.points[0].lat;
-  let lng = routeMeta.route.points[0].lng;
+  const angle = angularSpeed * nowMs + phase;
 
-  for (const seg of routeMeta.segments) {
-    if (seg.length === 0) continue;
-    if (remaining <= seg.length) {
-      const t = remaining / seg.length;
-      lat = seg.start.lat + (seg.end.lat - seg.start.lat) * t;
-      lng = seg.start.lng + (seg.end.lng - seg.start.lng) * t;
-      break;
-    }
-    remaining -= seg.length;
-  }
+  const lat =
+    region.centre.lat + ampLat * Math.sin(angle) + 0.0003 * Math.sin(angle * 3); // tiny wobble
+  const lng =
+    region.centre.lng + ampLng * Math.cos(angle) + 0.0003 * Math.cos(angle * 2);
 
   return {
     id,
     index,
     lat,
     lng,
-    routeId: routeMeta.route.id,
+    routeId: region.id,
     speedMS,
   };
 }

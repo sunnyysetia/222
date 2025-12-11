@@ -1,3 +1,4 @@
+// app/api/police-vehicles/route.ts
 import { NextResponse } from "next/server";
 import db from "@/db";
 import { crimes } from "@/db/schema";
@@ -5,8 +6,8 @@ import {
   getAllBaseUnits,
   getBaseUnitStateAtTime,
   haversineDistanceMetres,
-  Point,
-  PoliceVehicleStatus,
+  type Point,
+  type PoliceVehicleStatus,
 } from "@/lib/patrolSimulation";
 
 export type PoliceVehicle = {
@@ -87,7 +88,7 @@ export async function GET() {
 
     const { target, assignedAtMs, crimeId } = assignment;
 
-    // Where was this unit on its patrol route at assignment time?
+    // Where was this unit at assignment time on its patrol orbit?
     const baseAtAssign = getBaseUnitStateAtTime(unit.index, assignedAtMs);
 
     const from: Point = {
