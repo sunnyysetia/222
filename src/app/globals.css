@@ -124,10 +124,9 @@
   }
 }
 
-/* Police vehicle icon wrapper - SMALLER and no transform */
 .police-icon-wrapper {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 9999px;
   display: flex;
   align-items: center;
@@ -136,8 +135,8 @@
 
 /* The actual police car image */
 .police-icon-image {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
   filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
 }

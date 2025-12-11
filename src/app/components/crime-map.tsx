@@ -42,6 +42,7 @@ export function CrimeMap() {
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
   const vehicleMarkersRef = useRef<Record<string, mapboxgl.Marker>>({});
+  const vehiclesRef = useRef<PoliceVehicle[]>([]);
 
   const [mapLoaded, setMapLoaded] = useState(false);
   const [vehicles, setVehicles] = useState<PoliceVehicle[]>([]);
@@ -53,6 +54,11 @@ export function CrimeMap() {
   useEffect(() => {
     crimesRef.current = crimes;
   }, [crimes]);
+
+  // Keep vehiclesRef in sync for marker click handlers
+  useEffect(() => {
+    vehiclesRef.current = vehicles;
+  }, [vehicles]);
 
   // Top down map, no tilt
   useEffect(() => {
@@ -288,12 +294,14 @@ export function CrimeMap() {
       if (existingMarker) {
         existingMarker.setLngLat([lng, lat]);
         const el = existingMarker.getElement();
+        el.setAttribute("data-id", id);
         el.setAttribute("data-status", status);
         return;
       }
 
       const el = document.createElement("div");
       el.className = "police-icon-wrapper";
+      el.setAttribute("data-id", id);
       el.setAttribute("data-status", status);
 
       const img = document.createElement("img");
@@ -304,7 +312,9 @@ export function CrimeMap() {
 
       el.onclick = (e) => {
         e.stopPropagation();
-        setSelected({ type: "vehicle", data: vehicle });
+        const currentVehicle = vehiclesRef.current.find((v) => v.id === id);
+        if (!currentVehicle) return;
+        setSelected({ type: "vehicle", data: currentVehicle });
       };
 
       const marker = new mapboxgl.Marker({
