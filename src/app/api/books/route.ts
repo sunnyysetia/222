@@ -12,7 +12,7 @@ export async function GET() {
     );
   } catch (error) {
     return NextResponse.json(
-      { error: "Failed to fetch records" },
+      { error: `Failed to fetch records: ${error}` },
       { status: 500, headers: { "cache-control": "no-store" } }
     );
   }
