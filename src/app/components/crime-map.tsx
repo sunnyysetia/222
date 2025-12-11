@@ -6,7 +6,6 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import axios from "axios";
 import type { PoliceVehicle } from "@/app/api/police-vehicles/route";
-import type { CrimeReport } from "@/app/api/crime-reports/route";
 import type { Feature, FeatureCollection, Point } from "geojson";
 import {
   Dialog,
@@ -19,9 +18,26 @@ import {
 mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
 type SelectedThing =
-  | { type: "crime"; data: CrimeReport }
+  | { type: "crime"; data: CrimeIncident }
   | { type: "vehicle"; data: PoliceVehicle }
   | null;
+
+type CrimeSeverity = "low" | "medium" | "high";
+
+type CrimeRecord = {
+  id: string;
+  priorityLevel: number;
+  latitude: number;
+  longitude: number;
+  description: string;
+  address?: string | null;
+  createdAt?: string | null;
+};
+
+type CrimeIncident = CrimeRecord & {
+  severity: CrimeSeverity;
+  reportedAt: string;
+};
 
 const AUCKLAND_LNG = 174.7633;
 const AUCKLAND_LAT = -36.8485;
@@ -31,7 +47,7 @@ const CRIME_LAYER_ID = "crimes-layer";
 const CRIME_PULSE_LAYER_ID = "crimes-pulse-layer";
 type CrimeFeatureProps = {
   id: string;
-  severity: CrimeReport["severity"];
+  severity: CrimeIncident["severity"];
   freshness: "recent" | "warm" | "old";
 };
 type CrimeFeature = Feature<Point, CrimeFeatureProps>;
@@ -46,8 +62,8 @@ export function CrimeMap() {
 
   const [mapLoaded, setMapLoaded] = useState(false);
   const [vehicles, setVehicles] = useState<PoliceVehicle[]>([]);
-  const [crimes, setCrimes] = useState<CrimeReport[]>([]);
-  const crimesRef = useRef<CrimeReport[]>([]);
+  const [crimes, setCrimes] = useState<CrimeIncident[]>([]);
+  const crimesRef = useRef<CrimeIncident[]>([]);
   const [selected, setSelected] = useState<SelectedThing>(null);
 
   // Keep crimesRef in sync so click handler always has the latest data
@@ -208,16 +224,33 @@ export function CrimeMap() {
   useEffect(() => {
     let cancelled = false;
 
+    const toIncident = (record: CrimeRecord): CrimeIncident => {
+      const prioNum = Number(record.priorityLevel);
+      const priorityLevel = Number.isFinite(prioNum) ? prioNum : 1;
+      const severity: CrimeSeverity =
+        priorityLevel >= 8 ? "high" : priorityLevel >= 4 ? "medium" : "low";
+      const reportedAt = record.createdAt ?? new Date().toISOString();
+
+      return {
+        ...record,
+        priorityLevel,
+        severity,
+        reportedAt,
+        address: record.address,
+      };
+    };
+
     const fetchData = async () => {
       try {
         const [vehiclesRes, crimesRes] = await Promise.all([
           axios.get<{ vehicles: PoliceVehicle[] }>("/api/police-vehicles"),
-          axios.get<{ crimes: CrimeReport[] }>("/api/crime-reports"),
+          axios.get<{ data: CrimeRecord[] }>("/api/crimes"),
         ]);
 
         if (!cancelled) {
           setVehicles(vehiclesRes.data.vehicles ?? []);
-          setCrimes(crimesRes.data.crimes ?? []);
+          const records = crimesRes.data.data ?? [];
+          setCrimes(records.map(toIncident));
         }
       } catch (err) {
         console.error("Failed to fetch map data", err);
@@ -407,8 +440,12 @@ export function CrimeMap() {
                   {selected.data.description}
                 </p>
                 <p>
-                  <span className="font-semibold">Severity:</span>{" "}
+                  <span className="font-semibold">Severity (by priority):</span>{" "}
                   {selected.data.severity.toUpperCase()}
+                </p>
+                <p>
+                  <span className="font-semibold">Address:</span>{" "}
+                  {selected.data.address ?? "Resolving address..."}
                 </p>
                 <p>
                   <span className="font-semibold">Reported at:</span>{" "}
@@ -427,9 +464,6 @@ export function CrimeMap() {
             <>
               <DialogHeader>
                 <DialogTitle>Unit details</DialogTitle>
-                <DialogDescription>
-                  This unit is being animated from live bus data.
-                </DialogDescription>
               </DialogHeader>
               <div className="space-y-2 text-sm">
                 <p>
